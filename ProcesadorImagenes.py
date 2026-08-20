@@ -35,9 +35,19 @@ class App(ctk.CTk):
             command=self.convertir_grayscale,
             width=240,
             height=50,
-            font=ctk.CTkFont(family="Arial", size=15, weight="bold")
+            font=ctk.CTkFont(family="Arial", size=24, weight="bold")
         )
         self.btn_grayscale.grid(row=0, column=0, sticky="w")
+
+        self.btn_linear_to_sequential = ctk.CTkButton(
+            self.frame_buttons, 
+            text="Linear a Secuencial", 
+            command=self.linearTosequencial,
+            width=240,
+            height=50,
+            font=ctk.CTkFont(family="Arial", size=24, weight="bold")
+        )
+        self.btn_linear_to_sequential.grid(row=0, column=2, sticky="e")
 
         # Botón Cargar Imagen (Centrado)
         self.btn_upload = ctk.CTkButton(
@@ -46,7 +56,7 @@ class App(ctk.CTk):
             command=self.cargar_imagen,
             width=260,
             height=50,
-            font=ctk.CTkFont(family="Arial", size=15, weight="bold")
+            font=ctk.CTkFont(family="Arial", size=24, weight="bold")
         )
         self.btn_upload.grid(row=0, column=1)
 
@@ -89,6 +99,43 @@ class App(ctk.CTk):
 
             img_gray = Image.fromarray(gray)
             self.mostrar_imagen(img_gray)
+
+    def coeficienteLuz(self, r, g, b):
+        coeficiente = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        ys = 1.055 * (coeficiente ** (1 / 2.4)) - 0.055
+        ys = ys*255
+        return ys
+
+    def linearTosequencial(self):
+        if self.img_original is not None:
+           # Convertir a float para evitar pérdida de precisión en operaciones matemáticas
+            rs = self.r.astype(np.float32) / 255.0
+            gs = self.g.astype(np.float32) / 255.0
+            bs = self.b.astype(np.float32) / 255.0
+
+            # Aplicar la transformación usando np.where para evaluar toda la matriz píxel a píxel
+            rs = np.where(rs <= 0.0031308, rs / 12.92, ((rs + 0.055) / 1.055) ** 2.4)
+            gs = np.where(gs <= 0.0031308, gs / 12.92, ((gs + 0.055) / 1.055) ** 2.4)
+            bs = np.where(bs <= 0.0031308, bs / 12.92, ((bs + 0.055) / 1.055) ** 2.4) # (Nota: Asegúrate de usar bs aquí, tenías gs)
+
+            # Reescalar de vuelta a 0-255 y convertir a tipo uint8
+            rs_img = np.clip(rs * 255, 0, 255).astype(np.uint8)
+            gs_img = np.clip(gs * 255, 0, 255).astype(np.uint8)
+            bs_img = np.clip(bs * 255, 0, 255).astype(np.uint8)
+            
+            gris = self.coeficienteLuz(rs, gs, bs).astype(np.uint8)
+
+            # Imagen en escala de grises
+            img_array = np.stack((gris, gris, gris), axis=-1)
+
+            # Crear y mostrar la imagen transformada
+            img_new = Image.fromarray(img_array)
+            self.mostrar_imagen(img_new)
+            
+
+            
+
+            
 
 if __name__ == "__main__":
     app = App()
