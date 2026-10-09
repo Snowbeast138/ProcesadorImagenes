@@ -14,6 +14,7 @@ class App(ctk.CTk):
         self.geometry("1080x920")
 
         self.img_original = None  # Variable para almacenar la imagen original
+        self.img_actual = None  # Imagen que se está mostrando/procesando
         self.r = None  # Variable para almacenar el canal rojo
         self.g = None  # Variable para almacenar el canal verde
         self.b = None  # Variable para almacenar el canal azul
@@ -60,6 +61,17 @@ class App(ctk.CTk):
         )
         self.btn_upload.grid(row=0, column=1)
 
+        # Botón Suavizar Imagen (promedio de una vecindad de 3x3)
+        self.btn_smooth = ctk.CTkButton(
+            self.frame_buttons,
+            text="Suavizar Imagen",
+            command=self.suavizar_imagen,
+            width=260,
+            height=50,
+            font=ctk.CTkFont(family="Arial", size=24, weight="bold")
+        )
+        self.btn_smooth.grid(row=1, column=1, pady=(15, 0))
+
         # 2. CONTENEDOR PARA LA IMAGEN (Toma todo el espacio libre arriba)
         self.lbl_imagen = ctk.CTkLabel(
             self, 
@@ -77,6 +89,7 @@ class App(ctk.CTk):
             self.setRGBValues()  # Actualizar los valores RGB al cargar la imagen
 
     def mostrar_imagen(self, img_pil):
+        self.img_actual = img_pil.copy()
         img_ctk = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(800, 600))
         self.lbl_imagen.configure(image=img_ctk, text="")
 
@@ -99,6 +112,44 @@ class App(ctk.CTk):
 
             img_gray = Image.fromarray(gray)
             self.mostrar_imagen(img_gray)
+
+    def suavizar_imagen(self):
+        """Suaviza la imagen promediando cada píxel con sus ocho vecinos."""
+        if self.img_actual is None:
+            return
+
+        # int32 evita desbordamientos al sumar nueve valores de tipo uint8.
+        imagen = np.array(self.img_actual.convert("RGB"), dtype=np.int32)
+
+        # Varias pasadas hacen perceptible el suavizado incluso cuando la imagen
+        # se reduce para mostrarla. Cada pasada conserva el promedio 3x3 / 9.
+        for _ in range(4):
+            imagen = self.promedio_3x3(imagen)
+
+        self.mostrar_imagen(Image.fromarray(imagen.astype(np.uint8), mode="RGB"))
+
+    def promedio_3x3(self, imagen):
+        """Calcula una pasada del promedio 3x3 sobre una matriz RGB."""
+
+        # Replicar los bordes permite aplicar el filtro también a esos píxeles
+        # y mantener exactamente las dimensiones de la imagen original.
+        imagen_con_borde = np.pad(
+            imagen,
+            ((1, 1), (1, 1), (0, 0)),
+            mode="edge"
+        )
+
+        suma_vecinos = np.zeros_like(imagen)
+        alto, ancho = imagen.shape[:2]
+
+        for desplazamiento_fila in range(3):
+            for desplazamiento_columna in range(3):
+                suma_vecinos += imagen_con_borde[
+                    desplazamiento_fila:desplazamiento_fila + alto,
+                    desplazamiento_columna:desplazamiento_columna + ancho
+                ]
+
+        return suma_vecinos // 9
 
     def coeficienteLuz(self, r, g, b):
         coeficiente = 0.2126 * r + 0.7152 * g + 0.0722 * b
