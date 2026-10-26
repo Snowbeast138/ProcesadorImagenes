@@ -61,16 +61,36 @@ class App(ctk.CTk):
         )
         self.btn_upload.grid(row=0, column=1)
 
-        # Botón Suavizar Imagen (promedio de una vecindad de 3x3)
-        self.btn_smooth = ctk.CTkButton(
+        # Filtros espaciales con máscaras de 3x3
+        self.btn_box = ctk.CTkButton(
             self.frame_buttons,
-            text="Suavizar Imagen",
-            command=self.suavizar_imagen,
+            text="Filtro Box",
+            command=self.aplicar_filtro_box,
+            width=240,
+            height=50,
+            font=ctk.CTkFont(family="Arial", size=24, weight="bold")
+        )
+        self.btn_box.grid(row=1, column=0, sticky="w", pady=(15, 0))
+
+        self.btn_gauss = ctk.CTkButton(
+            self.frame_buttons,
+            text="Filtro Gauss",
+            command=self.aplicar_filtro_gauss,
             width=260,
             height=50,
             font=ctk.CTkFont(family="Arial", size=24, weight="bold")
         )
-        self.btn_smooth.grid(row=1, column=1, pady=(15, 0))
+        self.btn_gauss.grid(row=1, column=1, pady=(15, 0))
+
+        self.btn_laplace = ctk.CTkButton(
+            self.frame_buttons,
+            text="Filtro Laplace",
+            command=self.aplicar_filtro_laplace,
+            width=240,
+            height=50,
+            font=ctk.CTkFont(family="Arial", size=24, weight="bold")
+        )
+        self.btn_laplace.grid(row=1, column=2, sticky="e", pady=(15, 0))
 
         # 2. CONTENEDOR PARA LA IMAGEN (Toma todo el espacio libre arriba)
         self.lbl_imagen = ctk.CTkLabel(
@@ -113,43 +133,80 @@ class App(ctk.CTk):
             img_gray = Image.fromarray(gray)
             self.mostrar_imagen(img_gray)
 
-    def suavizar_imagen(self):
-        """Suaviza la imagen promediando cada píxel con sus ocho vecinos."""
+    def aplicar_filtro_box(self):
+        """Aplica una media uniforme de 3x3 para suavizar la imagen."""
         if self.img_actual is None:
             return
 
-        # int32 evita desbordamientos al sumar nueve valores de tipo uint8.
-        imagen = np.array(self.img_actual.convert("RGB"), dtype=np.int32)
+        imagen = np.array(self.img_actual.convert("RGB"), dtype=np.float32)
+        kernel_box = np.ones((3, 3), dtype=np.float32) / 9.0
+        resultado = self.aplicar_convolucion(imagen, kernel_box)
+        resultado = np.clip(resultado, 0, 255).astype(np.uint8)
+        self.mostrar_imagen(Image.fromarray(resultado, mode="RGB"))
 
-        # Varias pasadas hacen perceptible el suavizado incluso cuando la imagen
-        # se reduce para mostrarla. Cada pasada conserva el promedio 3x3 / 9.
-        for _ in range(4):
-            imagen = self.promedio_3x3(imagen)
+    def aplicar_filtro_gauss(self):
+        """Aplica un suavizado gaussiano ponderado de 3x3."""
+        if self.img_actual is None:
+            return
 
-        self.mostrar_imagen(Image.fromarray(imagen.astype(np.uint8), mode="RGB"))
+        imagen = np.array(self.img_actual.convert("RGB"), dtype=np.float32)
+        kernel_gauss = np.array(
+            [[1, 2, 1],
+             [2, 4, 2],
+             [1, 2, 1]],
+            dtype=np.float32
+        ) / 16.0
+        resultado = self.aplicar_convolucion(imagen, kernel_gauss)
+        resultado = np.clip(resultado, 0, 255).astype(np.uint8)
+        self.mostrar_imagen(Image.fromarray(resultado, mode="RGB"))
 
-    def promedio_3x3(self, imagen):
-        """Calcula una pasada del promedio 3x3 sobre una matriz RGB."""
+    def aplicar_filtro_laplace(self):
+        """Detecta bordes mediante la segunda derivada de Laplace."""
+        if self.img_actual is None:
+            return
+
+        imagen_rgb = np.array(self.img_actual.convert("RGB"), dtype=np.float32)
+        imagen_gris = (
+            0.299 * imagen_rgb[:, :, 0]
+            + 0.587 * imagen_rgb[:, :, 1]
+            + 0.114 * imagen_rgb[:, :, 2]
+        )
+        kernel_laplace = np.array(
+            [[0, -1, 0],
+             [-1, 4, -1],
+             [0, -1, 0]],
+            dtype=np.float32
+        )
+        respuesta = self.aplicar_convolucion(imagen_gris, kernel_laplace)
+        bordes = np.clip(np.abs(respuesta), 0, 255).astype(np.uint8)
+        resultado = np.stack((bordes, bordes, bordes), axis=-1)
+        self.mostrar_imagen(Image.fromarray(resultado, mode="RGB"))
+
+    def aplicar_convolucion(self, imagen, kernel):
+        """Aplica una máscara impar a una matriz 2D o a una imagen RGB."""
+        alto_kernel, ancho_kernel = kernel.shape
+        margen_y = alto_kernel // 2
+        margen_x = ancho_kernel // 2
+
+        if imagen.ndim == 2:
+            relleno = ((margen_y, margen_y), (margen_x, margen_x))
+        else:
+            relleno = ((margen_y, margen_y), (margen_x, margen_x), (0, 0))
 
         # Replicar los bordes permite aplicar el filtro también a esos píxeles
         # y mantener exactamente las dimensiones de la imagen original.
-        imagen_con_borde = np.pad(
-            imagen,
-            ((1, 1), (1, 1), (0, 0)),
-            mode="edge"
-        )
-
-        suma_vecinos = np.zeros_like(imagen)
+        imagen_con_borde = np.pad(imagen, relleno, mode="edge")
+        resultado = np.zeros_like(imagen, dtype=np.float32)
         alto, ancho = imagen.shape[:2]
 
-        for desplazamiento_fila in range(3):
-            for desplazamiento_columna in range(3):
-                suma_vecinos += imagen_con_borde[
+        for desplazamiento_fila in range(alto_kernel):
+            for desplazamiento_columna in range(ancho_kernel):
+                resultado += kernel[desplazamiento_fila, desplazamiento_columna] * imagen_con_borde[
                     desplazamiento_fila:desplazamiento_fila + alto,
                     desplazamiento_columna:desplazamiento_columna + ancho
                 ]
 
-        return suma_vecinos // 9
+        return resultado
 
     def coeficienteLuz(self, r, g, b):
         coeficiente = 0.2126 * r + 0.7152 * g + 0.0722 * b
