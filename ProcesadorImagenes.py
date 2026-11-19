@@ -92,6 +92,16 @@ class App(ctk.CTk):
         )
         self.btn_laplace.grid(row=1, column=2, sticky="e", pady=(15, 0))
 
+        self.btn_canny = ctk.CTkButton(
+            self.frame_buttons,
+            text="Filtro Canny",
+            command=self.aplicar_filtro_canny,
+            width=260,
+            height=50,
+            font=ctk.CTkFont(family="Arial", size=24, weight="bold")
+        )
+        self.btn_canny.grid(row=2, column=1, pady=(15, 0))
+
         # 2. CONTENEDOR PARA LA IMAGEN (Toma todo el espacio libre arriba)
         self.lbl_imagen = ctk.CTkLabel(
             self, 
@@ -181,6 +191,110 @@ class App(ctk.CTk):
         bordes = np.clip(np.abs(respuesta), 0, 255).astype(np.uint8)
         resultado = np.stack((bordes, bordes, bordes), axis=-1)
         self.mostrar_imagen(Image.fromarray(resultado, mode="RGB"))
+
+    def aplicar_filtro_canny(self):
+        """Detecta bordes con el algoritmo de Canny y los muestra en blanco y negro."""
+        if self.img_actual is None:
+            return
+
+        imagen = np.array(self.img_actual.convert("RGB"), dtype=np.float32)
+        bordes = self.calcular_canny(imagen)
+        resultado = np.stack((bordes, bordes, bordes), axis=-1)
+        self.mostrar_imagen(Image.fromarray(resultado, mode="RGB"))
+
+    def calcular_canny(self, imagen, umbral_bajo=50, umbral_alto=100):
+        """Ejecuta las etapas del algoritmo de Canny sobre una imagen RGB."""
+        gris = (
+            0.299 * imagen[:, :, 0]
+            + 0.587 * imagen[:, :, 1]
+            + 0.114 * imagen[:, :, 2]
+        )
+
+        kernel_gauss = np.array(
+            [[1, 2, 1],
+             [2, 4, 2],
+             [1, 2, 1]],
+            dtype=np.float32
+        ) / 16.0
+        suavizada = self.aplicar_convolucion(gris, kernel_gauss)
+
+        kernel_sobel_x = np.array(
+            [[-1, 0, 1],
+             [-2, 0, 2],
+             [-1, 0, 1]],
+            dtype=np.float32
+        )
+        kernel_sobel_y = np.array(
+            [[-1, -2, -1],
+             [0, 0, 0],
+             [1, 2, 1]],
+            dtype=np.float32
+        )
+        gradiente_x = self.aplicar_convolucion(suavizada, kernel_sobel_x)
+        gradiente_y = self.aplicar_convolucion(suavizada, kernel_sobel_y)
+        magnitud = np.hypot(gradiente_x, gradiente_y)
+        if magnitud.max() > 0:
+            magnitud = magnitud * (255.0 / magnitud.max())
+        direccion = np.rad2deg(np.arctan2(gradiente_y, gradiente_x)) % 180
+
+        bordes_delgados = self.suprimir_no_maximos(magnitud, direccion)
+        return self.aplicar_histeresis(bordes_delgados, umbral_bajo, umbral_alto)
+
+    @staticmethod
+    def suprimir_no_maximos(magnitud, direccion):
+        """Conserva únicamente máximos locales en la dirección del gradiente."""
+        alto, ancho = magnitud.shape
+        resultado = np.zeros((alto, ancho), dtype=np.float32)
+
+        for fila in range(1, alto - 1):
+            for columna in range(1, ancho - 1):
+                angulo = direccion[fila, columna]
+
+                if angulo < 22.5 or angulo >= 157.5:
+                    vecino_1 = magnitud[fila, columna - 1]
+                    vecino_2 = magnitud[fila, columna + 1]
+                elif angulo < 67.5:
+                    vecino_1 = magnitud[fila - 1, columna + 1]
+                    vecino_2 = magnitud[fila + 1, columna - 1]
+                elif angulo < 112.5:
+                    vecino_1 = magnitud[fila - 1, columna]
+                    vecino_2 = magnitud[fila + 1, columna]
+                else:
+                    vecino_1 = magnitud[fila - 1, columna - 1]
+                    vecino_2 = magnitud[fila + 1, columna + 1]
+
+                if magnitud[fila, columna] >= vecino_1 and magnitud[fila, columna] >= vecino_2:
+                    resultado[fila, columna] = magnitud[fila, columna]
+
+        return resultado
+
+    @staticmethod
+    def aplicar_histeresis(magnitud, umbral_bajo, umbral_alto):
+        """Une bordes débiles conectados a bordes fuertes mediante vecindad de 8 píxeles."""
+        fuerte = np.uint8(255)
+        debil = np.uint8(75)
+        resultado = np.zeros(magnitud.shape, dtype=np.uint8)
+        resultado[magnitud >= umbral_alto] = fuerte
+        resultado[(magnitud >= umbral_bajo) & (magnitud < umbral_alto)] = debil
+
+        pendientes = [tuple(posicion) for posicion in np.argwhere(resultado == fuerte)]
+        while pendientes:
+            fila, columna = pendientes.pop()
+            fila_inicio = max(0, fila - 1)
+            fila_fin = min(resultado.shape[0], fila + 2)
+            columna_inicio = max(0, columna - 1)
+            columna_fin = min(resultado.shape[1], columna + 2)
+
+            vecinos = resultado[fila_inicio:fila_fin, columna_inicio:columna_fin]
+            debiles_conectados = np.argwhere(vecinos == debil)
+            for desplazamiento_fila, desplazamiento_columna in debiles_conectados:
+                nueva_fila = fila_inicio + desplazamiento_fila
+                nueva_columna = columna_inicio + desplazamiento_columna
+                resultado[nueva_fila, nueva_columna] = fuerte
+                pendientes.append((nueva_fila, nueva_columna))
+
+        resultado[resultado != fuerte] = 0
+        return resultado
 
     def aplicar_convolucion(self, imagen, kernel):
         """Aplica una máscara impar a una matriz 2D o a una imagen RGB."""
